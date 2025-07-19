@@ -111,15 +111,7 @@ sourceSets["main"].resources {
 dependencies {
     implementation("thedarkcolour:kotlinforforge-neoforge:${project.property("kotlin4forge_version")}")
 
-    compileOnly("net.luckperms:api:5.4")
-
-    with(project.property("registrate_version") as String) {
-        implementation(group = "com.tterrag.registrate", name = "Registrate", version = this)
-        jarJar(group = "com.tterrag.registrate", name = "Registrate", version = this)
-    }
-
-    api(group = "com.github.wintersteve25.tau", name = "tau", version = "2.0.4")
-    jarJar(group = "com.github.wintersteve25.tau", name = "tau", version = "[2.0.4, 3)")
+    implementation(project(":base"))
 }
 
 // 模组元数据生成任务
