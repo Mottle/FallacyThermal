@@ -14,6 +14,12 @@ import net.minecraft.world.level.chunk.LevelChunkSection
 
 abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
 
+    companion object {
+        const val BASE_CACHED_CHUNK_REGION_LENGTH = 7
+
+        const val BASE_CACHED_CHUNK_REGION_AREA = BASE_CACHED_CHUNK_REGION_LENGTH * BASE_CACHED_CHUNK_REGION_LENGTH
+    }
+
     protected enum class TaskType {
         NORM, RECHECKED, WRITE
     }
@@ -24,13 +30,14 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
         get() = engine.level
 
     //所有的key都是ChunkPos::toLong
-    protected val chunkCache = Long2ObjectLinkedOpenHashMap<ChunkAccess>(7 * 7)
+    protected val chunkCache = Long2ObjectLinkedOpenHashMap<ChunkAccess>(BASE_CACHED_CHUNK_REGION_AREA)
 
-    protected val sectionCache = Long2ObjectLinkedOpenHashMap<List<LevelChunkSection>>(7 * 7 * 16)
+    protected val sectionCache =
+        Long2ObjectLinkedOpenHashMap<List<LevelChunkSection>>(BASE_CACHED_CHUNK_REGION_AREA * 16)
 
-    protected val storageCache = Long2ObjectLinkedOpenHashMap<HeatStorage>(7 * 7)
+    protected val storageCache = Long2ObjectLinkedOpenHashMap<HeatStorage>(BASE_CACHED_CHUNK_REGION_AREA)
 
-    protected val markChangedChunk = LongOpenHashSet(7 * 4)
+    protected val markChangedChunk = LongOpenHashSet(BASE_CACHED_CHUNK_REGION_LENGTH * 4)
 
     protected val increasedQueue: ObjectArrayFIFOQueue<PropagateTask> = ObjectArrayFIFOQueue(16 * 16 * 16)
 
@@ -56,10 +63,10 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
         sectionCache.clear()
         storageCache.clear()
 
-        chunkCache.trim(7 * 7)
-        sectionCache.trim(7 * 7 * 16)
-        storageCache.trim(7 * 7)
-        markChangedChunk.trim(7 * 4)
+        chunkCache.trim(BASE_CACHED_CHUNK_REGION_AREA)
+        sectionCache.trim(BASE_CACHED_CHUNK_REGION_AREA * 16)
+        storageCache.trim(BASE_CACHED_CHUNK_REGION_AREA)
+        markChangedChunk.trim(BASE_CACHED_CHUNK_REGION_LENGTH * 4)
     }
 
     abstract fun setHeat(pos: BlockPos, heat: Int)
