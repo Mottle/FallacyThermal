@@ -66,22 +66,16 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
 
     override fun queryPositive(chunkPos: ChunkPos): HeatStorage {
         val packed = chunkPos.toLong()
-        val data = positiveHeatCache[packed]?.get()
-
-        if (data == null) {
-            return level.getChunk(chunkPos.x, chunkPos.z).getData(ModAttachments.POSITIVE_CHUNK_HEAT)
-        }
+        val data = positiveHeatCache[packed]?.get() ?: return level.getChunk(chunkPos.x, chunkPos.z)
+            .getData(ModAttachments.POSITIVE_CHUNK_HEAT)
 
         return data
     }
 
     override fun queryNegative(chunkPos: ChunkPos): HeatStorage {
         val packed = chunkPos.toLong()
-        val data = negativeHeatCache[packed]?.get()
-
-        if (data == null) {
-            return level.getChunk(chunkPos.x, chunkPos.z).getData(ModAttachments.NEGATIVE_CHUNK_HEAT)
-        }
+        val data = negativeHeatCache[packed]?.get() ?: return level.getChunk(chunkPos.x, chunkPos.z)
+            .getData(ModAttachments.NEGATIVE_CHUNK_HEAT)
 
         return data
     }
