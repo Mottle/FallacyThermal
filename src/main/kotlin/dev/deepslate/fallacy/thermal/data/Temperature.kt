@@ -52,20 +52,23 @@ sealed interface Temperature : Comparable<Temperature> {
         fun fromString(string: String): Temperature {
             val (sign, noHeadString) = if (string.firstOrNull() == '-') -1 to string.substring(1) else 1 to string
 
-            // 只允许数字和末尾的单位字符
-            val charSet = setOf('K', '°', 'C', 'k', 'c')
-            require(noHeadString.all { c -> c.isDigit() || (c in charSet && noHeadString.last() == c) })
-
-            // 检查末尾字符
             val lastChar = noHeadString.last()
-            require(lastChar in setOf('K', 'C', 'k', 'c'))
+            val lastCharSet = setOf('K', 'C', 'k', 'c')
 
-            // 提取数值部分
-            val valueString = noHeadString.substring(
-                0,
-                noHeadString.length - (if (noHeadString.endsWith("°C") || noHeadString.endsWith("°c")) 2 else 1)
-            )
-            val value = valueString.toInt() * sign
+            require(lastChar in lastCharSet)
+
+            if (lastChar.lowercaseChar() == 'c') {
+                val c = noHeadString[noHeadString.length - 2]
+                require(c == '°' || c.isDigit())
+            }
+
+            val digits =
+                if (!noHeadString[noHeadString.length - 2].isDigit()) noHeadString.take(noHeadString.length - 2)
+                else noHeadString.take(noHeadString.length - 1)
+
+            require(digits.all { c -> c.isDigit() })
+
+            val value = digits.toInt() * sign
 
             // 检查温度值范围
             when (lastChar) {
