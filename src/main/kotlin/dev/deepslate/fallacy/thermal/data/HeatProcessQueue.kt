@@ -5,25 +5,27 @@ import net.minecraft.core.BlockPos
 import net.minecraft.world.level.ChunkPos
 
 class HeatProcessQueue : Iterable<HeatProcessQueue.HeatTask> {
-    private val threadUnsafeLinkedMap = Long2ObjectLinkedOpenHashMap<HeatTask>(2048)
+    private val threadUnsafeLinkedMapOfChunkTask = Long2ObjectLinkedOpenHashMap<HeatTask>(2048)
 
-    fun contains(chunkPos: ChunkPos) = synchronized(this) { threadUnsafeLinkedMap.containsKey(chunkPos.toLong()) }
+    fun contains(chunkPos: ChunkPos) = synchronized(this) { threadUnsafeLinkedMapOfChunkTask.containsKey(chunkPos.toLong()) }
 
     val empty: Boolean
-        get() = synchronized(this) { threadUnsafeLinkedMap.isEmpty() }
+        get() = synchronized(this) { threadUnsafeLinkedMapOfChunkTask.isEmpty() }
 
     val size: Int
-        get() = synchronized(this) { threadUnsafeLinkedMap.size }
+        get() = synchronized(this) { threadUnsafeLinkedMapOfChunkTask.size }
 
+    //相同区块的方块更新被分配到相同的任务中
+    //用以提升性能
     fun enqueueBlockChange(pos: BlockPos) {
         val chunkPos = ChunkPos(pos)
         val packed = chunkPos.toLong()
         val immutablePos = pos.immutable()
         synchronized(this) {
-            if (threadUnsafeLinkedMap.containsKey(packed)) {
-                threadUnsafeLinkedMap[packed].changedPosition + immutablePos
+            if (threadUnsafeLinkedMapOfChunkTask.containsKey(packed)) {
+                threadUnsafeLinkedMapOfChunkTask[packed].changedPosition.add(immutablePos)
             } else {
-                threadUnsafeLinkedMap[packed] = HeatTask(chunkPos, mutableSetOf(immutablePos), false)
+                threadUnsafeLinkedMapOfChunkTask[packed] = HeatTask(chunkPos, mutableSetOf(immutablePos), false)
             }
         }
     }
@@ -31,17 +33,17 @@ class HeatProcessQueue : Iterable<HeatProcessQueue.HeatTask> {
     fun enqueueAll(chunkPos: ChunkPos, positions: Iterable<BlockPos>, initialized: Boolean = false) {
         val packed = chunkPos.toLong()
         synchronized(this) {
-            if (threadUnsafeLinkedMap.containsKey(packed)) {
-                threadUnsafeLinkedMap[packed].changedPosition += positions
+            if (threadUnsafeLinkedMapOfChunkTask.containsKey(packed)) {
+                threadUnsafeLinkedMapOfChunkTask[packed].changedPosition += positions
             } else {
-                threadUnsafeLinkedMap[packed] = HeatTask(chunkPos, positions.toMutableSet(), initialized)
+                threadUnsafeLinkedMapOfChunkTask[packed] = HeatTask(chunkPos, positions.toMutableSet(), initialized)
             }
         }
     }
 
     fun dequeue(): HeatTask? {
         synchronized(this) {
-            return threadUnsafeLinkedMap.pollFirstEntry()?.value
+            return threadUnsafeLinkedMapOfChunkTask.pollFirstEntry()?.value
         }
     }
 
@@ -51,5 +53,5 @@ class HeatProcessQueue : Iterable<HeatProcessQueue.HeatTask> {
         val initialized: Boolean
     )
 
-    override fun iterator(): Iterator<HeatTask> = threadUnsafeLinkedMap.values.iterator()
+    override fun iterator(): Iterator<HeatTask> = threadUnsafeLinkedMapOfChunkTask.values.iterator()
 }
