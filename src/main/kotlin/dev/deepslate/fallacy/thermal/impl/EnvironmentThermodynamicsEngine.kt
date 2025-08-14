@@ -28,6 +28,8 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
     companion object {
         fun getEnvironmentEngineOrNull(level: ServerLevel): EnvironmentThermodynamicsEngine? =
             (level as? ThermalExtension)?.`fallacy$getThermalEngine`() as? EnvironmentThermodynamicsEngine
+
+        var STOPED = false
     }
 
     private val heatQueue: HeatProcessQueue = HeatProcessQueue()
@@ -146,6 +148,7 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
     }
 
     override fun runUpdates() {
+        if(STOPED) return
         propagateChanges()
     }
 

@@ -5,6 +5,7 @@
     "compatibilityLevel": "JAVA_21",
     "mixins": [
         "thermal4block.BlockMixin",
+        "thermal4level.LevelChunkMixin",
         "thermal4level.ServerLevelMixin"
     ],
     "client": [

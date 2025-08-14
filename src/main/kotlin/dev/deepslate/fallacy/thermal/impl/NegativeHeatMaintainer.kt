@@ -17,7 +17,7 @@ class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engi
         val storage = storageCache[packed]!!
         val nibbleIndex = (pos.y - level.minBuildHeight) / 16
         val nibble = storage[nibbleIndex]
-        return nibble?.getWriteable(pos.x, pos.y, pos.z) ?: ThermodynamicsEngine.Companion.MAX_HEAT
+        return nibble?.getWriteable(pos.x, pos.y, pos.z) ?: ThermodynamicsEngine.MAX_HEAT
     }
 
     override fun setHeat(pos: BlockPos, heat: Int) {
@@ -33,16 +33,16 @@ class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engi
         val currentHeat = getHeat(pos)
         val state = getBlockStateFromCache(pos)
         val emittedHeat =
-            if (ThermodynamicsEngine.Companion.isHeatSource(state)) ThermodynamicsEngine.Companion.getEpitaxialHeat(
+            if (ThermodynamicsEngine.isHeatSource(state)) ThermodynamicsEngine.getEpitaxialHeat(
                 state,
                 level,
                 pos
-            ) else ThermodynamicsEngine.Companion.MAX_HEAT
+            ) else ThermodynamicsEngine.MAX_HEAT
 
         //如果HeatStorage初始化的值和MAX_BIOME_HEAT不一致则需要手动设置
-        if (emittedHeat < ThermodynamicsEngine.Companion.MAX_BIOME_HEAT) setHeat(pos, emittedHeat)
-        else setHeat(pos, ThermodynamicsEngine.Companion.MAX_HEAT)
-        if (emittedHeat != ThermodynamicsEngine.Companion.MAX_HEAT) increasedQueue.enqueue(
+        if (emittedHeat < ThermodynamicsEngine.MAX_BIOME_HEAT) setHeat(pos, emittedHeat)
+        else setHeat(pos, ThermodynamicsEngine.MAX_HEAT)
+        if (emittedHeat != ThermodynamicsEngine.MAX_HEAT) increasedQueue.enqueue(
             PropagateTask(
                 pos,
                 emittedHeat,
@@ -65,11 +65,11 @@ class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engi
                 val currentHeat = getHeat(currentPos)
                 val state = getBlockStateFromCache(currentPos)
                 val thermalConductivity =
-                    ThermodynamicsEngine.Companion.getThermalConductivity(state, level, currentPos)
+                    ThermodynamicsEngine.getThermalConductivity(state, level, currentPos)
                 val nextHeat = (decay(propagatedHeat) / thermalConductivity).toInt()
 
                 //高于最高可能的环境温度则不继续传播
-                if (nextHeat >= ThermodynamicsEngine.Companion.MAX_BIOME_HEAT) continue
+                if (nextHeat >= ThermodynamicsEngine.MAX_BIOME_HEAT) continue
                 if (nextHeat < currentHeat) setHeat(currentPos, nextHeat) else continue
 
                 increasedQueue.enqueue(PropagateTask(currentPos, nextHeat, TaskType.NORM))
@@ -85,11 +85,11 @@ class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engi
                 val currentHeat = getHeat(currentPos)
 
                 //当前温度已经高于最高温度，不会再继续传播
-                if (currentHeat >= ThermodynamicsEngine.Companion.MAX_BIOME_HEAT) continue
+                if (currentHeat >= ThermodynamicsEngine.MAX_BIOME_HEAT) continue
 
                 val state = getBlockStateFromCache(currentPos)
                 val thermalConductivity =
-                    ThermodynamicsEngine.Companion.getThermalConductivity(state, level, currentPos)
+                    ThermodynamicsEngine.getThermalConductivity(state, level, currentPos)
                 val nextHeat = (decay(propagatedHeat) / thermalConductivity).toInt()
 
                 if (currentHeat < nextHeat) {
@@ -97,12 +97,12 @@ class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engi
                     continue
                 }
 
-                if (ThermodynamicsEngine.Companion.isHeatSource(state)) {
-                    val emittedHeat = ThermodynamicsEngine.Companion.getEpitaxialHeat(state, level, currentPos)
+                if (ThermodynamicsEngine.isHeatSource(state)) {
+                    val emittedHeat = ThermodynamicsEngine.getEpitaxialHeat(state, level, currentPos)
                     increasedQueue.enqueue(PropagateTask(currentPos, emittedHeat, TaskType.WRITE))
                 }
 
-                setHeat(currentPos, ThermodynamicsEngine.Companion.MAX_HEAT)
+                setHeat(currentPos, ThermodynamicsEngine.MAX_HEAT)
                 decreasedQueue.enqueue(PropagateTask(currentPos, nextHeat, TaskType.NORM))
             }
         }

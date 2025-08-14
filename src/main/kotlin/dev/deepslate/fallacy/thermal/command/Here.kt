@@ -21,7 +21,7 @@ data object Here : GameCommand {
         val player = context.source.entity ?: return 0
         val level = player.level() as? ServerLevel ?: return 0
         val engine = EnvironmentThermodynamicsEngine.getEnvironmentEngineOrNull(level) ?: return 0
-        val heat = engine.getHeat(player.onPos)
+        val heat = engine.getHeat(player.blockPosition())
         player.sendSystemMessage(Component.literal(Temperature.kelvins(heat).toCelsius().toString()))
 
         return Command.SINGLE_SUCCESS

@@ -46,7 +46,7 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
         return get(index)!!
     }
 
-    operator fun get(index: Int) = if (index < 0 || index >= size) null else heatStorage[index]
+    operator fun get(index: Int) = if (index !in 0..<size) null else heatStorage[index]
 
     fun freeEmpty() {
         for (idx in 0 until size) {
@@ -72,5 +72,28 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
     fun update() {
         freeEmpty()
         heatStorage.forEach { it?.update() }
+    }
+
+    fun toPlain(): ArrayList<Array<Array<IntArray>>?> {
+        val arrays = arrayListOf<Array<Array<IntArray>>?>()
+        for (nibble in heatStorage) {
+            if (nibble == null) {
+                arrays.add(null)
+                continue
+            }
+
+            val array3D = Array<Array<IntArray>>(16) {
+                Array<IntArray>(16) {
+                    IntArray(16).apply { fill(-1) } // 显式填充
+                }
+            }
+
+            for (y in 0..15) for (x in 0..15) for (z in 0..15) {
+                array3D[y][x][z] = nibble.getReadable(x, y, z)
+            }
+            arrays.add(array3D)
+        }
+
+        return arrays
     }
 }
