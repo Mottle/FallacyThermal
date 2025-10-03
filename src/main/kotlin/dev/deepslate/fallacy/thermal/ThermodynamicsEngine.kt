@@ -22,7 +22,7 @@ abstract class ThermodynamicsEngine {
 
     abstract fun checkBlock(pos: BlockPos)
 
-    abstract fun scanChunk(chunkPos: ChunkPos)
+    abstract fun scanChunk(chunkPos: ChunkPos, force: Boolean = false)
 
     abstract fun runUpdates()
 

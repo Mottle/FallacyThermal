@@ -16,9 +16,9 @@ object Stop : GameCommand {
     override val permissionRequired: String = "fallacy.command.thermal.stop"
 
     override fun execute(context: CommandContext<CommandSourceStack>): Int {
-        EnvironmentThermodynamicsEngine.STOPED = !EnvironmentThermodynamicsEngine.STOPED
+        EnvironmentThermodynamicsEngine.STOPPED = !EnvironmentThermodynamicsEngine.STOPPED
         context.source.sendSuccess(
-            { Component.literal("Set Thermal Engine ${if (EnvironmentThermodynamicsEngine.STOPED) "stoped" else "started"}") },
+            { Component.literal("Set Thermal Engine ${if (EnvironmentThermodynamicsEngine.STOPPED) "stoped" else "started"}") },
             true
         )
         return Command.SINGLE_SUCCESS

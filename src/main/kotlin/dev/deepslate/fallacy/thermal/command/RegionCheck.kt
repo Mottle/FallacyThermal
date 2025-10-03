@@ -52,7 +52,7 @@ data object RegionCheck : GameCommand {
             for (x in startChunkPos.x..endChunkPos.x) for (z in startChunkPos.z..endChunkPos.z) {
                 val chunkPos = ChunkPos(x, z)
 
-                engine.scanChunk(chunkPos)
+                engine.scanChunk(chunkPos, true)
                 ++progress
 
                 val ratio = ((progress.toFloat() / size.toFloat()) * 100f).toInt()

@@ -29,7 +29,7 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
         fun getEnvironmentEngineOrNull(level: ServerLevel): EnvironmentThermodynamicsEngine? =
             (level as? ThermalExtension)?.`fallacy$getThermalEngine`() as? EnvironmentThermodynamicsEngine
 
-        var STOPED = false
+        var STOPPED = false
     }
 
     private val heatQueue: HeatProcessQueue = HeatProcessQueue()
@@ -142,13 +142,13 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
         heatQueue.enqueueBlockChange(pos)
     }
 
-    override fun scanChunk(chunkPos: ChunkPos) {
+    override fun scanChunk(chunkPos: ChunkPos, force: Boolean) {
         val chunk = level.getChunk(chunkPos.x, chunkPos.z)
-        chunkScanner.enqueue(chunk)
+        if (!force) chunkScanner.enqueue(chunk) else chunkScanner.forceEnqueue(chunk)
     }
 
     override fun runUpdates() {
-        if(STOPED) return
+        if (STOPPED) return
         propagateChanges()
     }
 

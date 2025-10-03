@@ -100,6 +100,7 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
             level.getChunk(chunkPos.x, chunkPos.z)
                 .setData(ModAttachments.HEAT_PROCESS_STATE, HeatProcessState.ERROR)
         }
+        markChangedChunk.clear()
     }
 
     private fun propagateBlockChanges(chunk: ChunkAccess, positions: Set<BlockPos>) {
