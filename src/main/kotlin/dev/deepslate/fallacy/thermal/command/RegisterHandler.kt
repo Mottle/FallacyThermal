@@ -14,5 +14,5 @@ object RegisterHandler {
     }
 
     @JvmStatic
-    val commands = setOf(ChunkStateHere, EngineState, RegionCheck, Here, Stop)
+    val commands = setOf(ChunkStateHere, ChunkState, EngineState, RegionCheck, QueryHere, Stop)
 }

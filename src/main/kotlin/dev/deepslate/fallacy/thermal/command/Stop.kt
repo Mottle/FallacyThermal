@@ -18,7 +18,7 @@ object Stop : GameCommand {
     override fun execute(context: CommandContext<CommandSourceStack>): Int {
         EnvironmentThermodynamicsEngine.STOPPED = !EnvironmentThermodynamicsEngine.STOPPED
         context.source.sendSuccess(
-            { Component.literal("Set Thermal Engine ${if (EnvironmentThermodynamicsEngine.STOPPED) "stoped" else "started"}") },
+            { Component.literal("Set Thermal Engine ${if (EnvironmentThermodynamicsEngine.STOPPED) "stopped" else "started"}") },
             true
         )
         return Command.SINGLE_SUCCESS

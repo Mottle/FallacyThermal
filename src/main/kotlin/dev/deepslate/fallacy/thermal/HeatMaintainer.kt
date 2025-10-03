@@ -12,6 +12,7 @@ import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.level.chunk.ChunkAccess
 import net.minecraft.world.level.chunk.LevelChunkSection
 
+//随用随销毁
 abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
 
     companion object {
@@ -100,7 +101,7 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
             level.getChunk(chunkPos.x, chunkPos.z)
                 .setData(ModAttachments.HEAT_PROCESS_STATE, HeatProcessState.ERROR)
         }
-        markChangedChunk.clear()
+//        markChangedChunk.clear()
     }
 
     private fun propagateBlockChanges(chunk: ChunkAccess, positions: Set<BlockPos>) {
@@ -114,4 +115,16 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
     abstract fun performIncrease()
 
     abstract fun performDecrease()
+
+    fun debugInfo() = """
+        $this:
+        --cache size--
+        chunkCache: ${chunkCache.size}
+        sectionCache: ${sectionCache.size}
+        storageCache: ${storageCache.size}
+        markChangedChunk: ${markChangedChunk.size}
+        increasedQueue: ${increasedQueue.size()}
+        decreasedQueue: ${decreasedQueue.size()}
+        --------------
+    """.trimIndent()
 }

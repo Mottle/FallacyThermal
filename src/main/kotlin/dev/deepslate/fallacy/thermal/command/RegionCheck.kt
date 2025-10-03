@@ -18,7 +18,7 @@ data object RegionCheck : GameCommand {
 
     override val suggestions: Map<String, SuggestionProvider<CommandSourceStack>> = emptyMap()
 
-    override val permissionRequired: String? = "fallacy.command.thermal.region_check"
+    override val permissionRequired: String = "fallacy.command.thermal.region_check"
 
     private var running: Boolean = false
 
