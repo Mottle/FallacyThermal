@@ -5,7 +5,7 @@ plugins {
     `java-library`
     `maven-publish`
     idea
-    id("net.neoforged.moddev") version "2.0.96"
+    id("net.neoforged.moddev") version "2.0.113"
     kotlin("jvm")
 }
 
