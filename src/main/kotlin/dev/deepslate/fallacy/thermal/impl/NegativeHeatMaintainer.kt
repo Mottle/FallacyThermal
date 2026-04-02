@@ -1,28 +1,30 @@
 package dev.deepslate.fallacy.thermal.impl
 
 import dev.deepslate.fallacy.thermal.HeatMaintainer
-import dev.deepslate.fallacy.thermal.HeatStorageCache
 import dev.deepslate.fallacy.thermal.ThermodynamicsEngine
 import dev.deepslate.fallacy.thermal.data.HeatStorage
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.world.level.ChunkPos
+import net.minecraft.world.level.chunk.ChunkAccess
 
 class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engine) {
 
-    override fun query(chunkPos: ChunkPos, cache: HeatStorageCache): HeatStorage = cache.queryNegative(chunkPos)
+    override fun query(chunk: ChunkAccess): HeatStorage = chunk.getData(dev.deepslate.fallacy.thermal.ModAttachments.NEGATIVE_CHUNK_HEAT)
 
     override fun getHeat(pos: BlockPos): Int {
+        if (isOutOfBuildHeight(pos)) return ThermodynamicsEngine.MAX_HEAT
         val packed = ChunkPos.asLong(pos)
-        val storage = storageCache[packed]!!
+        val storage = storageCache[packed] ?: return ThermodynamicsEngine.MAX_HEAT
         val nibbleIndex = (pos.y - level.minBuildHeight) / 16
         val nibble = storage[nibbleIndex]
         return nibble?.getWriteable(pos.x, pos.y, pos.z) ?: ThermodynamicsEngine.MAX_HEAT
     }
 
     override fun setHeat(pos: BlockPos, heat: Int) {
+        if (isOutOfBuildHeight(pos)) return
         val packed = ChunkPos.asLong(pos)
-        val storage = storageCache[packed]!!
+        val storage = storageCache[packed] ?: return
         val nibbleIndex = (pos.y - level.minBuildHeight) / 16
         val nibble = storage.getOrInitFull(nibbleIndex)
         nibble.set(pos.x, pos.y, pos.z, heat)
@@ -108,6 +110,10 @@ class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engi
         }
 
         performIncrease()
+    }
+
+    override fun updateStorage(storage: HeatStorage) {
+        storage.updateFull()
     }
 
     fun decay(heat: Int): Float = heat + 20f

@@ -13,6 +13,8 @@ class ChunkScanner(
     val engine: EnvironmentThermodynamicsEngine,
     val heatQueue: HeatProcessQueue
 ) {
+    @Volatile
+    private var closing = false
 
     private val record = ConcurrentSkipListSet<Long>()
 
@@ -23,15 +25,21 @@ class ChunkScanner(
         get() = mailbox.size()
 
     fun enqueue(chunk: ChunkAccess) {
+        if (closing) return
         val state = getProcessState(chunk)
         if (state == HeatProcessState.CORRECTED || state == HeatProcessState.PENDING) return
         forceEnqueue(chunk)
     }
 
     fun forceEnqueue(chunk: ChunkAccess) {
+        if (closing) return
         setProcessState(chunk, HeatProcessState.PENDING)
         record.add(chunk.pos.toLong())
         mailbox.tell {
+            if (closing) {
+                record.remove(chunk.pos.toLong())
+                return@tell
+            }
             scanSources(chunk)
         }
     }
@@ -44,6 +52,7 @@ class ChunkScanner(
 
 
     private fun scanSources(chunk: ChunkAccess) {
+        if (closing) return
         val sections = chunk.sections
         val startPos = chunk.pos.worldPosition
         val positions = mutableListOf<BlockPos>()
@@ -73,11 +82,12 @@ class ChunkScanner(
     }
 
     fun stop() {
+        closing = true
         mailbox.close()
 
         record.forEach {
             val chunkPos = ChunkPos(it)
-            val chunk = engine.level.getChunk(chunkPos.x, chunkPos.z)
+            val chunk = engine.getLoadedChunk(chunkPos.x, chunkPos.z) ?: return@forEach
             setProcessState(chunk, HeatProcessState.STERN)
         }
     }

@@ -20,7 +20,7 @@ data object EngineState : GameCommand {
         val level = context.source.level
         val engine = EnvironmentThermodynamicsEngine.getEnvironmentEngineOrNull(level) ?: return 0
         val c1 = Component.literal("state: ").withStyle(ChatFormatting.ITALIC).withStyle(ChatFormatting.AQUA)
-        if (EnvironmentThermodynamicsEngine.STOPPED) c1.append(
+        if (engine.isStopped()) c1.append(
             Component.literal("STOPPED\n").withStyle(ChatFormatting.RED)
                 .withStyle(ChatFormatting.BOLD)
         )

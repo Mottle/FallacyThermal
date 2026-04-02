@@ -5,6 +5,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet
 import it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue
 import net.minecraft.core.BlockPos
+import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.level.ChunkPos
 import net.minecraft.world.level.Level
 import net.minecraft.world.level.block.Blocks
@@ -44,20 +45,25 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
 
     protected val decreasedQueue: ObjectArrayFIFOQueue<PropagateTask> = ObjectArrayFIFOQueue(16 * 16 * 16)
 
-    private fun setupCache(level: Level, centerChunkPos: ChunkPos, cache: HeatStorageCache) {
+    protected fun isOutOfBuildHeight(pos: BlockPos): Boolean = pos.y !in level.minBuildHeight until level.maxBuildHeight
+
+    protected fun getLoadedChunk(chunkX: Int, chunkZ: Int): ChunkAccess? =
+        (level as? ServerLevel)?.chunkSource?.getChunkNow(chunkX, chunkZ)
+
+    private fun setupCache(level: Level, centerChunkPos: ChunkPos) {
         val radius = 3
 
         for (dx in -radius..radius) for (dz in -radius..radius) {
-            val chunk = level.getChunk(centerChunkPos.x + dx, centerChunkPos.z + dz)
+            val chunk = getLoadedChunk(centerChunkPos.x + dx, centerChunkPos.z + dz) ?: continue
             val chunkPos = chunk.pos
             val packedChunkPos = chunkPos.toLong()
             chunkCache[packedChunkPos] = chunk
             sectionCache.computeIfAbsent(packedChunkPos) { chunk.sections.toList() }
-            storageCache.computeIfAbsent(packedChunkPos) { query(chunkPos, cache) }
+            storageCache.computeIfAbsent(packedChunkPos) { query(chunk) }
         }
     }
 
-    abstract fun query(chunkPos: ChunkPos, cache: HeatStorageCache): HeatStorage
+    abstract fun query(chunk: ChunkAccess): HeatStorage
 
     fun freeCache() {
         chunkCache.clear()
@@ -75,8 +81,10 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
     abstract fun getHeat(pos: BlockPos): Int
 
     protected fun getBlockStateFromCache(pos: BlockPos): BlockState {
+        if (isOutOfBuildHeight(pos)) return Blocks.AIR.defaultBlockState()
         val sections = sectionCache[ChunkPos.asLong(pos)] ?: return Blocks.AIR.defaultBlockState()
         val sectionIndex = (pos.y - level.minBuildHeight) / 16
+        if (sectionIndex !in sections.indices) return Blocks.AIR.defaultBlockState()
         val section = sections[sectionIndex]
 
         if (section.hasOnlyAir()) return Blocks.AIR.defaultBlockState()
@@ -87,19 +95,18 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
 
     fun processHeatChanges(chunkPos: ChunkPos, changedPositions: Set<BlockPos>) {
         try {
-            setupCache(level, chunkPos, engine.cache)
+            setupCache(level, chunkPos)
             val packed = chunkPos.toLong()
             val chunk = chunkCache[packed] ?: return
             if (changedPositions.isNotEmpty()) propagateBlockChanges(chunk, changedPositions)
 
             for (packed in markChangedChunk.iterator()) {
-                storageCache[packed]?.update()
+                updateStorage(storageCache[packed] ?: continue)
                 chunkCache[packed]?.isUnsaved = true
             }
         } catch (e: Exception) {
             TheMod.LOGGER.error(e)
-            level.getChunk(chunkPos.x, chunkPos.z)
-                .setData(ModAttachments.HEAT_PROCESS_STATE, HeatProcessState.ERROR)
+            getLoadedChunk(chunkPos.x, chunkPos.z)?.setData(ModAttachments.HEAT_PROCESS_STATE, HeatProcessState.ERROR)
         }
 //        markChangedChunk.clear()
     }
@@ -115,6 +122,10 @@ abstract class HeatMaintainer(val engine: ThermodynamicsEngine) {
     abstract fun performIncrease()
 
     abstract fun performDecrease()
+
+    protected open fun updateStorage(storage: HeatStorage) {
+        storage.update()
+    }
 
     fun debugInfo() = """
         $this:

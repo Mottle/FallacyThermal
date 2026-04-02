@@ -4,7 +4,7 @@ import dev.deepslate.fallacy.thermal.ThermodynamicsEngine;
 
 public interface ThermalExtension {
     default ThermodynamicsEngine fallacy$getThermalEngine() {
-        throw new UnsupportedOperationException("This will never happen.");
+        return null;
     }
 
     default void fallacy$setThermalEngine(ThermodynamicsEngine engine) {

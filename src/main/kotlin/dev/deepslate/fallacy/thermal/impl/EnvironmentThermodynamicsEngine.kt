@@ -8,7 +8,6 @@ import dev.deepslate.fallacy.thermal.datapack.ModDatapacks
 import dev.deepslate.fallacy.thermal.inject.ThermalExtension
 import dev.deepslate.fallacy.utils.Worker
 import dev.deepslate.fallacy.utils.datapack
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap
 import net.minecraft.core.BlockPos
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.util.thread.ProcessorMailbox
@@ -18,41 +17,56 @@ import net.minecraft.world.level.biome.Biomes
 import net.neoforged.bus.api.EventPriority
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
+import net.neoforged.neoforge.event.OnDatapackSyncEvent
 import net.neoforged.neoforge.event.level.ChunkEvent
 import net.neoforged.neoforge.event.server.ServerStoppingEvent
-import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentSkipListSet
+import java.util.concurrent.ConcurrentHashMap
 
 open class EnvironmentThermodynamicsEngine(override val level: Level) : ThermodynamicsEngine(), HeatStorageCache {
 
     companion object {
         fun getEnvironmentEngineOrNull(level: ServerLevel): EnvironmentThermodynamicsEngine? =
-            (level as? ThermalExtension)?.`fallacy$getThermalEngine`() as? EnvironmentThermodynamicsEngine
-
-        var STOPPED = false
+            runCatching { (level as? ThermalExtension)?.`fallacy$getThermalEngine`() as? EnvironmentThermodynamicsEngine }.getOrNull()
     }
 
     private val heatQueue: HeatProcessQueue = HeatProcessQueue()
 
     private val chunkScanner = ChunkScanner(this, heatQueue)
 
-    private val positiveHeatCache: Long2ObjectOpenHashMap<WeakReference<HeatStorage>> = Long2ObjectOpenHashMap()
+    private val positiveHeatCache: MutableMap<Long, HeatStorage> = ConcurrentHashMap()
 
-    private val negativeHeatCache: Long2ObjectOpenHashMap<WeakReference<HeatStorage>> = Long2ObjectOpenHashMap()
+    private val negativeHeatCache: MutableMap<Long, HeatStorage> = ConcurrentHashMap()
+
+    @Volatile
+    private var stopped = false
+
+    @Volatile
+    private var closing = false
+
+    private val updateLock = Any()
 
     override val cache: HeatStorageCache = this
 
+    fun toggleStopped(): Boolean {
+        stopped = !stopped
+        return stopped
+    }
+
+    fun isStopped(): Boolean = stopped
+
     fun stop() {
+        closing = true
         chunkScanner.stop()
         mailbox.close()
 
         record.map {
             val chunkPos = ChunkPos(it)
-            level.getChunk(chunkPos.x, chunkPos.z)
-        }.forEach { chunkScanner.setProcessState(it, HeatProcessState.STERN) }
+            getLoadedChunk(chunkPos.x, chunkPos.z)
+        }.filterNotNull().forEach { chunkScanner.setProcessState(it, HeatProcessState.STERN) }
 
-        heatQueue.forEach {
-            val chunk = level.getChunk(it.chunkPos.worldPosition)
+        heatQueue.snapshot().forEach {
+            val chunk = getLoadedChunk(it.chunkPos.x, it.chunkPos.z) ?: return@forEach
             chunkScanner.setProcessState(chunk, HeatProcessState.STERN)
         }
     }
@@ -66,9 +80,11 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
     val heatQueueSize: Int
         get() = heatQueue.size
 
+    fun getLoadedChunk(chunkX: Int, chunkZ: Int) = (level as? ServerLevel)?.chunkSource?.getChunkNow(chunkX, chunkZ)
+
     override fun queryPositive(chunkPos: ChunkPos): HeatStorage {
         val packed = chunkPos.toLong()
-        val data = positiveHeatCache[packed]?.get() ?: return level.getChunk(chunkPos.x, chunkPos.z)
+        val data = positiveHeatCache[packed] ?: return level.getChunk(chunkPos.x, chunkPos.z)
             .getData(ModAttachments.POSITIVE_CHUNK_HEAT)
 
         return data
@@ -76,13 +92,17 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
 
     override fun queryNegative(chunkPos: ChunkPos): HeatStorage {
         val packed = chunkPos.toLong()
-        val data = negativeHeatCache[packed]?.get() ?: return level.getChunk(chunkPos.x, chunkPos.z)
+        val data = negativeHeatCache[packed] ?: return level.getChunk(chunkPos.x, chunkPos.z)
             .getData(ModAttachments.NEGATIVE_CHUNK_HEAT)
 
         return data
     }
 
     private var biomeHeatCache: BiomeHeatConfiguration? = null
+
+    fun invalidateBiomeHeatCache() {
+        biomeHeatCache = null
+    }
 
     fun getBiomeHeat(pos: BlockPos): Int {
         if (biomeHeatCache == null) biomeHeatCache =
@@ -92,26 +112,26 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
     }
 
     override fun getHeat(pos: BlockPos): Int {
-        val packedChunkPos = ChunkPos.asLong(pos)
-        val index = (pos.y - level.minBuildHeight) / 16
+        synchronized(updateLock) {
+            val packedChunkPos = ChunkPos.asLong(pos)
+            val index = (pos.y - level.minBuildHeight) / 16
 
-        val positiveHeatStorage = queryPositive(ChunkPos(packedChunkPos))
-        val negativeHeatStorage = queryNegative(ChunkPos(packedChunkPos))
+            val positiveHeatStorage = queryPositive(ChunkPos(packedChunkPos))
+            val negativeHeatStorage = queryNegative(ChunkPos(packedChunkPos))
 
-        val positiveHeat = positiveHeatStorage[index]?.getReadable(pos.x, pos.y, pos.z) ?: MIN_HEAT
-        val negativeHeat = negativeHeatStorage[index]?.getReadable(pos.x, pos.y, pos.z) ?: MAX_HEAT
-        val biomeHeat = getBiomeHeat(pos)
-        val sunlightHeat = getSunlightHeatDelta(pos)
-        val weatherHeat = getWeatherHeatDelta(pos)
-        val dayNightCycleHeat = getDayNightCycleHeatDelta(pos)
-        val environmentHeat = biomeHeat + sunlightHeat + weatherHeat + dayNightCycleHeat
+            val positiveHeat = positiveHeatStorage[index]?.getReadable(pos.x, pos.y, pos.z) ?: MIN_HEAT
+            val negativeHeat = negativeHeatStorage[index]?.getReadable(pos.x, pos.y, pos.z) ?: MAX_HEAT
+            val biomeHeat = getBiomeHeat(pos)
+            val sunlightHeat = getSunlightHeatDelta(pos)
+            val weatherHeat = getWeatherHeatDelta(pos)
+            val dayNightCycleHeat = getDayNightCycleHeatDelta(pos)
+            val environmentHeat = biomeHeat + sunlightHeat + weatherHeat + dayNightCycleHeat
 
-        val positiveImpact = if (positiveHeat > environmentHeat) positiveHeat - environmentHeat else 0
-        val negativeImpact = if (negativeHeat < environmentHeat) negativeHeat - environmentHeat else 0
+            val positiveImpact = if (positiveHeat > environmentHeat) positiveHeat - environmentHeat else 0
+            val negativeImpact = if (negativeHeat < environmentHeat) negativeHeat - environmentHeat else 0
 
-        val finalHeat = environmentHeat + positiveImpact + negativeImpact
-
-        return finalHeat
+            return environmentHeat + positiveImpact + negativeImpact
+        }
     }
 
 
@@ -138,17 +158,17 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
     protected open fun getWeatherHeatDelta(pos: BlockPos): Int = 0
 
     override fun checkBlock(pos: BlockPos) {
-        if (pos.y !in level.minBuildHeight..level.maxBuildHeight) return
+        if (pos.y !in level.minBuildHeight until level.maxBuildHeight) return
         heatQueue.enqueueBlockChange(pos)
     }
 
     override fun scanChunk(chunkPos: ChunkPos, force: Boolean) {
-        val chunk = level.getChunk(chunkPos.x, chunkPos.z)
+        val chunk = getLoadedChunk(chunkPos.x, chunkPos.z) ?: return
         if (!force) chunkScanner.enqueue(chunk) else chunkScanner.forceEnqueue(chunk)
     }
 
     override fun runUpdates() {
-        if (STOPPED) return
+        if (stopped || closing) return
         propagateChanges()
     }
 
@@ -166,8 +186,8 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
             val negativeData = chunk.getData(ModAttachments.NEGATIVE_CHUNK_HEAT)
             val engine = getEnvironmentEngineOrNull(level)
 
-            engine?.positiveHeatCache[packed] = WeakReference(positiveData)
-            engine?.negativeHeatCache[packed] = WeakReference(negativeData)
+            engine?.positiveHeatCache?.set(packed, positiveData)
+            engine?.negativeHeatCache?.set(packed, negativeData)
         }
 
         @SubscribeEvent
@@ -206,6 +226,13 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
                 engine.stop()
             }
         }
+
+        @SubscribeEvent
+        fun onDatapackSync(event: OnDatapackSyncEvent) {
+            event.playerList.server.allLevels.forEach {
+                getEnvironmentEngineOrNull(it)?.invalidateBiomeHeatCache()
+            }
+        }
     }
 
     private val mailbox = ProcessorMailbox.create(Worker.IO_POOL, "fallacy-thermodynamics-process")
@@ -214,6 +241,7 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
     private val record = ConcurrentSkipListSet<Long>()
 
     fun propagateChanges() {
+        if (closing) return
         if (heatQueue.empty) return
         if (mailbox.size() > 200) return
 
@@ -224,21 +252,26 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
             if (positions.isNotEmpty()) {
                 record.add(task.chunkPos.toLong())
                 mailbox.tell {
-                    PositiveHeatMaintainer(this).processHeatChanges(task.chunkPos, task.changedPosition)
-                    NegativeHeatMaintainer(this).processHeatChanges(task.chunkPos, task.changedPosition)
+                    if (closing) {
+                        record.remove(task.chunkPos.toLong())
+                        return@tell
+                    }
+                    synchronized(updateLock) {
+                        PositiveHeatMaintainer(this).processHeatChanges(task.chunkPos, task.changedPosition)
+                        NegativeHeatMaintainer(this).processHeatChanges(task.chunkPos, task.changedPosition)
+                    }
 
                     if (task.initialized) {
-                        val chunk = level.getChunk(task.chunkPos.x, task.chunkPos.z)
-                        chunkScanner.setProcessState(chunk, HeatProcessState.CORRECTED)
+                        val chunk = getLoadedChunk(task.chunkPos.x, task.chunkPos.z)
+                        if (chunk != null) chunkScanner.setProcessState(chunk, HeatProcessState.CORRECTED)
                     }
 
                     record.remove(task.chunkPos.toLong())
                 }
             } else {
                 if (task.initialized) {
-                    val chunk = level.getChunk(task.chunkPos.x, task.chunkPos.z)
-
-                    chunkScanner.setProcessState(chunk, HeatProcessState.CORRECTED)
+                    val chunk = getLoadedChunk(task.chunkPos.x, task.chunkPos.z)
+                    if (chunk != null) chunkScanner.setProcessState(chunk, HeatProcessState.CORRECTED)
                 }
             }
         }

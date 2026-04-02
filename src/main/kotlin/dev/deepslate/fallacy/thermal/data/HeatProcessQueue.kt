@@ -34,7 +34,9 @@ class HeatProcessQueue : Iterable<HeatProcessQueue.HeatTask> {
         val packed = chunkPos.toLong()
         synchronized(this) {
             if (threadUnsafeLinkedMapOfChunkTask.containsKey(packed)) {
-                threadUnsafeLinkedMapOfChunkTask[packed].changedPosition += positions
+                val task = threadUnsafeLinkedMapOfChunkTask[packed]
+                task.changedPosition += positions
+                task.initialized = task.initialized || initialized
             } else {
                 threadUnsafeLinkedMapOfChunkTask[packed] = HeatTask(chunkPos, positions.toMutableSet(), initialized)
             }
@@ -47,11 +49,15 @@ class HeatProcessQueue : Iterable<HeatProcessQueue.HeatTask> {
         }
     }
 
+    fun snapshot(): List<HeatTask> = synchronized(this) {
+        threadUnsafeLinkedMapOfChunkTask.values.map { it.copy(changedPosition = it.changedPosition.toMutableSet()) }
+    }
+
     data class HeatTask(
         val chunkPos: ChunkPos,
         val changedPosition: MutableSet<BlockPos>,
-        val initialized: Boolean
+        var initialized: Boolean
     )
 
-    override fun iterator(): Iterator<HeatTask> = threadUnsafeLinkedMapOfChunkTask.values.iterator()
+    override fun iterator(): Iterator<HeatTask> = snapshot().iterator()
 }

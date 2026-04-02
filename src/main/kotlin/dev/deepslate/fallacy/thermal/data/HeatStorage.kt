@@ -20,7 +20,7 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
             storage.heatStorage.toList().map { it?.let { Either.right(it) } ?: Either.left(0) }
 
         fun of(chunk: ChunkAccess): HeatStorage {
-            val size = (chunk.maxBuildHeight - chunk.minBuildHeight) / 16 + 1
+            val size = (chunk.maxBuildHeight - chunk.minBuildHeight) / 16
             return HeatStorage(Array(size) { null })
         }
 
@@ -33,50 +33,64 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
     private var heatStorage: Array<HeatNibble?> = data
 
     fun getOrInitEmpty(index: Int): HeatNibble {
-        if (heatStorage[index] == null) {
-            heatStorage[index] = HeatNibble.empty()
+        synchronized(this) {
+            if (heatStorage[index] == null) {
+                heatStorage[index] = HeatNibble.empty()
+            }
+            return get(index)!!
         }
-        return get(index)!!
     }
 
     fun getOrInitFull(index: Int): HeatNibble {
-        if (heatStorage[index] == null) {
-            heatStorage[index] = HeatNibble.full()
+        synchronized(this) {
+            if (heatStorage[index] == null) {
+                heatStorage[index] = HeatNibble.full()
+            }
+            return get(index)!!
         }
-        return get(index)!!
     }
 
-    operator fun get(index: Int) = if (index !in 0..<size) null else heatStorage[index]
+    operator fun get(index: Int) = synchronized(this) { if (index !in 0..<size) null else heatStorage[index] }
 
     fun freeEmpty() {
-        for (idx in 0 until size) {
-            val nibble = heatStorage[idx] ?: continue
-            if (nibble.isAllZero()) {
-                heatStorage[idx] = null
+        synchronized(this) {
+            for (idx in 0 until size) {
+                val nibble = heatStorage[idx] ?: continue
+                if (nibble.isAllZero()) {
+                    heatStorage[idx] = null
+                }
             }
         }
     }
 
     fun freeFull() {
-        for (idx in 0 until size) {
-            val nibble = heatStorage[idx] ?: continue
-            if (nibble.isAllOne()) {
-                heatStorage[idx] = null
+        synchronized(this) {
+            for (idx in 0 until size) {
+                val nibble = heatStorage[idx] ?: continue
+                if (nibble.isAllOne()) {
+                    heatStorage[idx] = null
+                }
             }
         }
     }
 
     val size: Int
-        get() = heatStorage.size
+        get() = synchronized(this) { heatStorage.size }
 
     fun update() {
         freeEmpty()
         heatStorage.forEach { it?.update() }
     }
 
+    fun updateFull() {
+        freeFull()
+        heatStorage.forEach { it?.update() }
+    }
+
     fun toPlain(): ArrayList<Array<Array<IntArray>>?> {
         val arrays = arrayListOf<Array<Array<IntArray>>?>()
-        for (nibble in heatStorage) {
+        val snapshot = synchronized(this) { heatStorage.copyOf() }
+        for (nibble in snapshot) {
             if (nibble == null) {
                 arrays.add(null)
                 continue
