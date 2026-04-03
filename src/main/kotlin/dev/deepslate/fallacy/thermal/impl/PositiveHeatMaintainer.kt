@@ -6,12 +6,14 @@ import dev.deepslate.fallacy.thermal.data.HeatStorage
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.world.level.ChunkPos
-import net.minecraft.world.level.chunk.ChunkAccess
 import kotlin.math.max
 
-class PositiveHeatMaintainer(engine: EnvironmentThermodynamicsEngine) : HeatMaintainer(engine) {
+class PositiveHeatMaintainer(
+    engine: EnvironmentThermodynamicsEngine,
+    snapshots: Map<Long, HeatMaintainer.ChunkSnapshot>
+) : HeatMaintainer(engine, snapshots) {
 
-    override fun query(chunk: ChunkAccess): HeatStorage = chunk.getData(dev.deepslate.fallacy.thermal.ModAttachments.POSITIVE_CHUNK_HEAT)
+    override fun query(snapshot: ChunkSnapshot): HeatStorage = snapshot.positiveHeat
 
     override fun getHeat(pos: BlockPos): Int {
         if (isOutOfBuildHeight(pos)) return ThermodynamicsEngine.MIN_HEAT

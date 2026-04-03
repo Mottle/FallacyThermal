@@ -32,6 +32,12 @@ object ModAttachments {
             AttachmentType.builder { _ -> HeatProcessState.UNPROCESSED }.serialize(HeatProcessState.CODEC).build()
         }
 
+    @JvmStatic
+    internal val HEAT_TASK_VERSION: DeferredHolder<AttachmentType<*>, AttachmentType<Int>> =
+        registry.register("heat_task_version") { _ ->
+            AttachmentType.builder { _ -> 0 }.build()
+        }
+
     @EventBusSubscriber(modid = TheMod.ID)
     object RegisterHandler {
         @SubscribeEvent

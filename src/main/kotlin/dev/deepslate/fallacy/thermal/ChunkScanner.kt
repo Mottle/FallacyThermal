@@ -7,12 +7,18 @@ import net.minecraft.core.BlockPos
 import net.minecraft.util.thread.ProcessorMailbox
 import net.minecraft.world.level.ChunkPos
 import net.minecraft.world.level.chunk.ChunkAccess
+import net.minecraft.world.level.chunk.LevelChunkSection
 import java.util.concurrent.ConcurrentSkipListSet
 
 class ChunkScanner(
     val engine: EnvironmentThermodynamicsEngine,
     val heatQueue: HeatProcessQueue
 ) {
+    data class ChunkScanSnapshot(
+        val chunkPos: ChunkPos,
+        val sections: List<LevelChunkSection?>
+    )
+
     @Volatile
     private var closing = false
 
@@ -34,13 +40,15 @@ class ChunkScanner(
     fun forceEnqueue(chunk: ChunkAccess) {
         if (closing) return
         setProcessState(chunk, HeatProcessState.PENDING)
+        engine.bumpChunkVersion(chunk.pos)
         record.add(chunk.pos.toLong())
+        val snapshot = snapshotChunk(chunk)
         mailbox.tell {
             if (closing) {
                 record.remove(chunk.pos.toLong())
                 return@tell
             }
-            scanSources(chunk)
+            scanSources(snapshot)
         }
     }
 
@@ -51,10 +59,16 @@ class ChunkScanner(
     }
 
 
-    private fun scanSources(chunk: ChunkAccess) {
+    private fun snapshotSection(section: LevelChunkSection?): LevelChunkSection? =
+        section?.let { LevelChunkSection(it.states.copy(), it.biomes) }
+
+    private fun snapshotChunk(chunk: ChunkAccess): ChunkScanSnapshot =
+        ChunkScanSnapshot(chunk.pos, chunk.sections.map(::snapshotSection))
+
+    private fun scanSources(snapshot: ChunkScanSnapshot) {
         if (closing) return
-        val sections = chunk.sections
-        val startPos = chunk.pos.worldPosition
+        val sections = snapshot.sections
+        val startPos = snapshot.chunkPos.worldPosition
         val positions = mutableListOf<BlockPos>()
 
         for (sectionIdx in 0 until sections.size) {
@@ -76,8 +90,8 @@ class ChunkScanner(
             }
         }
 
-        heatQueue.enqueueAll(chunk.pos, positions, true)
-        record.remove(chunk.pos.toLong())
+        heatQueue.enqueueAll(snapshot.chunkPos, positions, true)
+        record.remove(snapshot.chunkPos.toLong())
 //        setProcessState(chunk, HeatProcessState.CORRECTED)
     }
 

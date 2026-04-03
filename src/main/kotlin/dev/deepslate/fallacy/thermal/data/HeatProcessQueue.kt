@@ -7,7 +7,8 @@ import net.minecraft.world.level.ChunkPos
 class HeatProcessQueue : Iterable<HeatProcessQueue.HeatTask> {
     private val threadUnsafeLinkedMapOfChunkTask = Long2ObjectLinkedOpenHashMap<HeatTask>(2048)
 
-    fun contains(chunkPos: ChunkPos) = synchronized(this) { threadUnsafeLinkedMapOfChunkTask.containsKey(chunkPos.toLong()) }
+    fun contains(chunkPos: ChunkPos) =
+        synchronized(this) { threadUnsafeLinkedMapOfChunkTask.containsKey(chunkPos.toLong()) }
 
     val empty: Boolean
         get() = synchronized(this) { threadUnsafeLinkedMapOfChunkTask.isEmpty() }

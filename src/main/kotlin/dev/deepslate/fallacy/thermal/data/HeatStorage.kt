@@ -17,7 +17,7 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
             HeatStorage(list.map { it.right().getOrNull() }.toTypedArray())
 
         private fun to(storage: HeatStorage): List<Either<Short, HeatNibble>> =
-            storage.heatStorage.toList().map { it?.let { Either.right(it) } ?: Either.left(0) }
+            storage.snapshot().toList().map { it?.let { Either.right(it) } ?: Either.left(0) }
 
         fun of(chunk: ChunkAccess): HeatStorage {
             val size = (chunk.maxBuildHeight - chunk.minBuildHeight) / 16
@@ -32,21 +32,46 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
 
     private var heatStorage: Array<HeatNibble?> = data
 
+    private var sharedSections: BooleanArray = BooleanArray(data.size)
+
+    fun snapshot(): Array<HeatNibble?> = synchronized(this) {
+        Array(heatStorage.size) { idx ->
+            heatStorage[idx]?.let { HeatNibble(it.toByteArray()) }
+        }
+    }
+
+    fun copy(): HeatStorage = synchronized(this) {
+        val storageCopy = HeatStorage(heatStorage.copyOf())
+        val shared = BooleanArray(heatStorage.size) { idx -> heatStorage[idx] != null }
+        sharedSections = shared.copyOf()
+        storageCopy.sharedSections = shared
+        storageCopy
+    }
+
+    private fun ensureWritable(index: Int, full: Boolean): HeatNibble {
+        if (heatStorage[index] == null) {
+            heatStorage[index] = if (full) HeatNibble.full() else HeatNibble.empty()
+            sharedSections[index] = false
+            return heatStorage[index]!!
+        }
+
+        if (sharedSections[index]) {
+            heatStorage[index] = HeatNibble(heatStorage[index]!!.toByteArray())
+            sharedSections[index] = false
+        }
+
+        return heatStorage[index]!!
+    }
+
     fun getOrInitEmpty(index: Int): HeatNibble {
         synchronized(this) {
-            if (heatStorage[index] == null) {
-                heatStorage[index] = HeatNibble.empty()
-            }
-            return get(index)!!
+            return ensureWritable(index, false)
         }
     }
 
     fun getOrInitFull(index: Int): HeatNibble {
         synchronized(this) {
-            if (heatStorage[index] == null) {
-                heatStorage[index] = HeatNibble.full()
-            }
-            return get(index)!!
+            return ensureWritable(index, true)
         }
     }
 
@@ -58,6 +83,7 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
                 val nibble = heatStorage[idx] ?: continue
                 if (nibble.isAllZero()) {
                     heatStorage[idx] = null
+                    sharedSections[idx] = false
                 }
             }
         }
@@ -69,6 +95,7 @@ class HeatStorage(data: Array<HeatNibble?> = arrayOf()) {
                 val nibble = heatStorage[idx] ?: continue
                 if (nibble.isAllOne()) {
                     heatStorage[idx] = null
+                    sharedSections[idx] = false
                 }
             }
         }

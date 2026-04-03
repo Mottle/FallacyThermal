@@ -7,13 +7,13 @@ import com.mojang.brigadier.suggestion.SuggestionProvider
 import dev.deepslate.fallacy.thermal.TheMod
 import dev.deepslate.fallacy.thermal.ThermodynamicsEngine
 import dev.deepslate.fallacy.utils.command.GameCommand
-import net.neoforged.bus.api.SubscribeEvent
-import net.neoforged.fml.common.EventBusSubscriber
 import net.minecraft.commands.CommandSourceStack
 import net.minecraft.core.BlockPos
 import net.minecraft.network.chat.Component
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.level.ChunkPos
+import net.neoforged.bus.api.SubscribeEvent
+import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.neoforge.event.tick.LevelTickEvent
 import java.util.concurrent.atomic.AtomicBoolean
 

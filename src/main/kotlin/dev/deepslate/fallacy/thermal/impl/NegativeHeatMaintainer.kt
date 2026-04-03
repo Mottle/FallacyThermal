@@ -6,11 +6,13 @@ import dev.deepslate.fallacy.thermal.data.HeatStorage
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.world.level.ChunkPos
-import net.minecraft.world.level.chunk.ChunkAccess
 
-class NegativeHeatMaintainer(engine: ThermodynamicsEngine) : HeatMaintainer(engine) {
+class NegativeHeatMaintainer(
+    engine: ThermodynamicsEngine,
+    snapshots: Map<Long, HeatMaintainer.ChunkSnapshot>
+) : HeatMaintainer(engine, snapshots) {
 
-    override fun query(chunk: ChunkAccess): HeatStorage = chunk.getData(dev.deepslate.fallacy.thermal.ModAttachments.NEGATIVE_CHUNK_HEAT)
+    override fun query(snapshot: ChunkSnapshot): HeatStorage = snapshot.negativeHeat
 
     override fun getHeat(pos: BlockPos): Int {
         if (isOutOfBuildHeight(pos)) return ThermodynamicsEngine.MAX_HEAT
