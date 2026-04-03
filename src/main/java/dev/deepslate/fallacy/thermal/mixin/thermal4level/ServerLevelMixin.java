@@ -16,14 +16,21 @@ public abstract class ServerLevelMixin implements ThermalExtension {
     }
 
     @Unique
-    protected ThermodynamicsEngine fallacy$thermodynamicsEngine = null;
+    protected volatile ThermodynamicsEngine fallacy$thermodynamicsEngine = null;
 
     @Override
     public ThermodynamicsEngine fallacy$getThermalEngine() {
-        if (fallacy$thermodynamicsEngine == null) {
-            fallacy$thermodynamicsEngine = new EnvironmentThermodynamicsEngine(fallacy$self());
+        ThermodynamicsEngine engine = fallacy$thermodynamicsEngine;
+        if (engine == null) {
+            synchronized (this) {
+                engine = fallacy$thermodynamicsEngine;
+                if (engine == null) {
+                    engine = new EnvironmentThermodynamicsEngine(fallacy$self());
+                    fallacy$thermodynamicsEngine = engine;
+                }
+            }
         }
-        return fallacy$thermodynamicsEngine;
+        return engine;
     }
 
     @Override

@@ -19,6 +19,7 @@ class PositiveHeatMaintainer(
         if (isOutOfBuildHeight(pos)) return ThermodynamicsEngine.MIN_HEAT
         val packed = ChunkPos.asLong(pos)
         val storage = storageCache[packed] ?: return ThermodynamicsEngine.MIN_HEAT
+        markTouchedChunk(packed)
         val nibbleIndex = (pos.y - level.minBuildHeight) / 16
         val nibble = storage[nibbleIndex]
         return nibble?.getWriteable(pos.x, pos.y, pos.z) ?: ThermodynamicsEngine.MIN_HEAT
@@ -28,6 +29,7 @@ class PositiveHeatMaintainer(
         if (isOutOfBuildHeight(pos)) return
         val packed = ChunkPos.asLong(pos)
         val storage = storageCache[packed] ?: return
+        markTouchedChunk(packed)
         val nibbleIndex = (pos.y - level.minBuildHeight) / 16
         val nibble = storage.getOrInitEmpty(nibbleIndex)
         nibble.set(pos.x, pos.y, pos.z, heat)

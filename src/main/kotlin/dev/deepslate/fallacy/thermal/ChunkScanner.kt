@@ -30,6 +30,8 @@ class ChunkScanner(
     val taskCount: Int
         get() = mailbox.size()
 
+    fun isInFlight(chunkPos: ChunkPos): Boolean = record.contains(chunkPos.toLong())
+
     fun enqueue(chunk: ChunkAccess) {
         if (closing) return
         val state = getProcessState(chunk)
@@ -42,13 +44,34 @@ class ChunkScanner(
         setProcessState(chunk, HeatProcessState.PENDING)
         engine.bumpChunkVersion(chunk.pos)
         record.add(chunk.pos.toLong())
-        val snapshot = snapshotChunk(chunk)
-        mailbox.tell {
-            if (closing) {
-                record.remove(chunk.pos.toLong())
-                return@tell
+        val snapshot = try {
+            snapshotChunk(chunk)
+        } catch (e: Exception) {
+            TheMod.LOGGER.error(e)
+            record.remove(chunk.pos.toLong())
+            setProcessState(chunk, HeatProcessState.ERROR)
+            return
+        }
+        try {
+            mailbox.tell {
+                try {
+                    if (closing) return@tell
+                    scanSources(snapshot)
+                } catch (e: Exception) {
+                    TheMod.LOGGER.error(e)
+                    val server = (engine.level as? net.minecraft.server.level.ServerLevel)?.server
+                    server?.execute {
+                        val loadedChunk = engine.getLoadedChunk(snapshot.chunkPos.x, snapshot.chunkPos.z) ?: return@execute
+                        setProcessState(loadedChunk, HeatProcessState.ERROR)
+                    }
+                } finally {
+                    record.remove(snapshot.chunkPos.toLong())
+                }
             }
-            scanSources(snapshot)
+        } catch (e: Exception) {
+            TheMod.LOGGER.error(e)
+            record.remove(snapshot.chunkPos.toLong())
+            setProcessState(chunk, HeatProcessState.ERROR)
         }
     }
 
@@ -91,7 +114,6 @@ class ChunkScanner(
         }
 
         heatQueue.enqueueAll(snapshot.chunkPos, positions, true)
-        record.remove(snapshot.chunkPos.toLong())
 //        setProcessState(chunk, HeatProcessState.CORRECTED)
     }
 

@@ -14,6 +14,8 @@ import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.level.ChunkPos
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
+import net.neoforged.neoforge.event.level.LevelEvent
+import net.neoforged.neoforge.event.server.ServerStoppingEvent
 import net.neoforged.neoforge.event.tick.LevelTickEvent
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -53,7 +55,12 @@ data object RegionCheck : GameCommand {
         val z1 = IntegerArgumentType.getInteger(context, "z1")
         val x2 = IntegerArgumentType.getInteger(context, "x2")
         val z2 = IntegerArgumentType.getInteger(context, "z2")
-        val level = context.source.player?.level() as? ServerLevel ?: return 0
+        val level = context.source.player?.level() as? ServerLevel
+        if (level == null) {
+            running.set(false)
+            context.source.sendFailure(Component.literal("Only players can execute this command."))
+            return 0
+        }
         val engine = ThermodynamicsEngine.getEngine(level)
 
         val startChunkPos = ChunkPos(BlockPos(x1, 0, z1))
@@ -84,33 +91,59 @@ data object RegionCheck : GameCommand {
     @SubscribeEvent
     fun onLevelTick(event: LevelTickEvent.Post) {
         val task = activeTask ?: return
+        if (task.level.server.isStopped) {
+            activeTask = null
+            running.set(false)
+            return
+        }
         val level = event.level as? ServerLevel ?: return
         if (level != task.level) return
 
-        var processed = 0
-        while (processed < CHUNKS_PER_TICK && task.nextX <= task.endChunkPos.x) {
-            task.engine.scanChunk(ChunkPos(task.nextX, task.nextZ), true)
-            task.progress++
-            processed++
+        try {
+            var processed = 0
+            while (processed < CHUNKS_PER_TICK && task.nextX <= task.endChunkPos.x) {
+                task.engine.scanChunk(ChunkPos(task.nextX, task.nextZ), true)
+                task.progress++
+                processed++
 
-            if (task.nextZ < task.endChunkPos.z) {
-                task.nextZ++
-            } else {
-                task.nextZ = task.startChunkPos.z
-                task.nextX++
+                if (task.nextZ < task.endChunkPos.z) {
+                    task.nextZ++
+                } else {
+                    task.nextZ = task.startChunkPos.z
+                    task.nextX++
+                }
             }
-        }
 
-        val ratio = ((task.progress.toFloat() / task.total.toFloat()) * 100f).toInt()
-        if (ratio >= task.lastRatio + 5 || task.progress == task.total) {
-            task.lastRatio = ratio
-            task.source.sendSuccess({ Component.literal("Scanning... $ratio%") }, true)
-        }
+            val ratio = ((task.progress.toFloat() / task.total.toFloat()) * 100f).toInt()
+            if (ratio >= task.lastRatio + 5 || task.progress == task.total) {
+                task.lastRatio = ratio
+                task.source.sendSuccess({ Component.literal("Scanning... $ratio%") }, true)
+            }
 
-        if (task.progress >= task.total) {
-            task.source.sendSuccess({ Component.literal("Scan successful.") }, true)
+            if (task.progress >= task.total) {
+                task.source.sendSuccess({ Component.literal("Scan successful.") }, true)
+                activeTask = null
+                running.set(false)
+            }
+        } catch (e: Exception) {
+            task.source.sendFailure(Component.literal("Scan failed: ${e.message ?: "unknown error"}"))
             activeTask = null
             running.set(false)
         }
+    }
+
+    @SubscribeEvent
+    fun onLevelUnload(event: LevelEvent.Unload) {
+        val task = activeTask ?: return
+        if (event.level == task.level) {
+            activeTask = null
+            running.set(false)
+        }
+    }
+
+    @SubscribeEvent
+    fun onServerStopping(event: ServerStoppingEvent) {
+        activeTask = null
+        running.set(false)
     }
 }

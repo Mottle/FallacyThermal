@@ -15,6 +15,10 @@ abstract class HeatMaintainer(
     val engine: ThermodynamicsEngine,
     private val snapshots: Map<Long, ChunkSnapshot>
 ) {
+    data class ProcessResult(
+        val updates: Map<Long, HeatStorage>,
+        val touchedChunks: Set<Long>
+    )
 
     data class ChunkSnapshot(
         val chunkPos: ChunkPos,
@@ -47,8 +51,12 @@ abstract class HeatMaintainer(
     protected val increasedQueue: ObjectArrayFIFOQueue<PropagateTask> = ObjectArrayFIFOQueue(16 * 16 * 16)
 
     protected val decreasedQueue: ObjectArrayFIFOQueue<PropagateTask> = ObjectArrayFIFOQueue(16 * 16 * 16)
+    protected val touchedChunks: MutableSet<Long> = linkedSetOf()
 
     protected fun isOutOfBuildHeight(pos: BlockPos): Boolean = pos.y !in level.minBuildHeight until level.maxBuildHeight
+    protected fun markTouchedChunk(packedChunkPos: Long) {
+        touchedChunks.add(packedChunkPos)
+    }
 
     private fun setupCache() {
         snapshots.values.forEach { snapshot ->
@@ -66,7 +74,9 @@ abstract class HeatMaintainer(
 
     protected fun getBlockStateFromCache(pos: BlockPos): BlockState {
         if (isOutOfBuildHeight(pos)) return Blocks.AIR.defaultBlockState()
-        val sections = sectionCache[ChunkPos.asLong(pos)] ?: return Blocks.AIR.defaultBlockState()
+        val packedChunkPos = ChunkPos.asLong(pos)
+        val sections = sectionCache[packedChunkPos] ?: return Blocks.AIR.defaultBlockState()
+        markTouchedChunk(packedChunkPos)
         val sectionIndex = (pos.y - level.minBuildHeight) / 16
         if (sectionIndex !in sections.indices) return Blocks.AIR.defaultBlockState()
         val section = sections[sectionIndex] ?: return Blocks.AIR.defaultBlockState()
@@ -77,7 +87,7 @@ abstract class HeatMaintainer(
 
     abstract fun checkBlock(pos: BlockPos)
 
-    fun processHeatChanges(changedPositions: Set<BlockPos>): Map<Long, HeatStorage> {
+    fun processHeatChanges(changedPositions: Set<BlockPos>): ProcessResult {
         setupCache()
 
         if (changedPositions.isNotEmpty()) {
@@ -91,7 +101,12 @@ abstract class HeatMaintainer(
             updateStorage(storageCache[packed] ?: continue)
         }
 
-        return markChangedChunk.associateWith { packed -> storageCache[packed]!! }
+        val updates = markChangedChunk.associateWith { packed -> storageCache[packed]!! }
+        val accessed = linkedSetOf<Long>().apply {
+            addAll(touchedChunks)
+            addAll(updates.keys)
+        }
+        return ProcessResult(updates, accessed)
     }
 
     abstract fun performIncrease()

@@ -23,6 +23,7 @@ import net.neoforged.neoforge.event.server.ServerStoppingEvent
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.math.max
@@ -34,14 +35,43 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
         val versions: Map<Long, Int>
     )
 
+    private data class CachedChunkSnapshot(
+        val sections: List<LevelChunkSection?>,
+        val positiveHeat: HeatStorage,
+        val negativeHeat: HeatStorage,
+        val version: Int
+    )
+
     private data class TaskRegion(
         val chunks: List<ChunkPos>,
-        val packed: Set<Long>
+        val packed: Set<Long>,
+        val minX: Int,
+        val maxX: Int,
+        val minZ: Int,
+        val maxZ: Int
+    ) {
+        fun overlaps(other: TaskRegion): Boolean =
+            minX <= other.maxX && maxX >= other.minX && minZ <= other.maxZ && maxZ >= other.minZ
+    }
+
+    private data class ScheduledTask(
+        val sourceTasks: List<HeatProcessQueue.HeatTask>,
+        val primaryChunk: ChunkPos,
+        val region: TaskRegion,
+        val changedPositions: Set<BlockPos>,
+        val initializedChunks: Set<Long>
+    )
+
+    private data class ReservedRegion(
+        val id: Long,
+        val region: TaskRegion
     )
 
     companion object {
         private const val TASK_REGION_RADIUS = 3
+        private const val MERGE_SCAN_LIMIT = 8
         private val MAX_PARALLEL_TASKS = max(2, Runtime.getRuntime().availableProcessors().coerceAtMost(8))
+        private const val REGION_LOCK_STRIPES = 4096
 
         fun getEnvironmentEngineOrNull(level: ServerLevel): EnvironmentThermodynamicsEngine? =
             runCatching { (level as? ThermalExtension)?.`fallacy$getThermalEngine`() as? EnvironmentThermodynamicsEngine }.getOrNull()
@@ -55,6 +85,15 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
 
     private val negativeHeatCache: MutableMap<Long, HeatStorage> = ConcurrentHashMap()
 
+    private fun newDefaultHeatStorage(): HeatStorage {
+        val size = (level.maxBuildHeight - level.minBuildHeight) / 16
+        return HeatStorage(Array(size) { null })
+    }
+
+    private val defaultPositiveHeatStorage: HeatStorage = newDefaultHeatStorage()
+
+    private val defaultNegativeHeatStorage: HeatStorage = newDefaultHeatStorage()
+
     @Volatile
     private var stopped = false
 
@@ -63,9 +102,10 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
 
     private val activeTaskCount = AtomicInteger(0)
 
-    private val regionLocks: MutableMap<Long, ReentrantReadWriteLock> = ConcurrentHashMap()
+    private val regionLocks: Array<ReentrantReadWriteLock> = Array(REGION_LOCK_STRIPES) { ReentrantReadWriteLock() }
 
-    private val reservedTaskRegions = ConcurrentSkipListSet<Long>()
+    private val reservedRegionIdGenerator = AtomicLong(0)
+    private val reservedTaskRegions: MutableMap<Long, TaskRegion> = ConcurrentHashMap()
 
     override val cache: HeatStorageCache = this
 
@@ -118,11 +158,19 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
         val changedChunks = task.changedPosition
             .map(::ChunkPos)
             .ifEmpty { listOf(task.chunkPos) }
+        return taskRegionFromChunks(changedChunks)
+    }
 
-        val minX = changedChunks.minOf { it.x } - TASK_REGION_RADIUS
-        val maxX = changedChunks.maxOf { it.x } + TASK_REGION_RADIUS
-        val minZ = changedChunks.minOf { it.z } - TASK_REGION_RADIUS
-        val maxZ = changedChunks.maxOf { it.z } + TASK_REGION_RADIUS
+    private fun taskRegionFromChunks(changedChunks: Collection<ChunkPos>): TaskRegion {
+        val minChunkX = changedChunks.minOf { it.x }
+        val maxChunkX = changedChunks.maxOf { it.x }
+        val minChunkZ = changedChunks.minOf { it.z }
+        val maxChunkZ = changedChunks.maxOf { it.z }
+
+        val minX = minChunkX - TASK_REGION_RADIUS
+        val maxX = maxChunkX + TASK_REGION_RADIUS
+        val minZ = minChunkZ - TASK_REGION_RADIUS
+        val maxZ = maxChunkZ + TASK_REGION_RADIUS
 
         val chunks = buildList((maxX - minX + 1) * (maxZ - minZ + 1)) {
             for (x in minX..maxX) {
@@ -131,31 +179,53 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
                 }
             }
         }
-        return TaskRegion(chunks, chunks.mapTo(LinkedHashSet(chunks.size), ChunkPos::toLong))
+        return TaskRegion(
+            chunks = chunks,
+            packed = chunks.mapTo(LinkedHashSet(chunks.size), ChunkPos::toLong),
+            minX = minX,
+            maxX = maxX,
+            minZ = minZ,
+            maxZ = maxZ
+        )
     }
 
-    private fun tryReserveTask(region: TaskRegion): Boolean {
+    private fun tryReserveTask(region: TaskRegion): ReservedRegion? {
         return synchronized(reservedTaskRegions) {
-            if (region.packed.any(reservedTaskRegions::contains)) return false
-            reservedTaskRegions.addAll(region.packed)
-            true
+            if (reservedTaskRegions.values.any { it.overlaps(region) }) return null
+            val id = reservedRegionIdGenerator.incrementAndGet()
+            reservedTaskRegions[id] = region
+            ReservedRegion(id, region)
         }
     }
 
-    private fun releaseTask(region: TaskRegion) {
-        reservedTaskRegions.removeAll(region.packed)
+    private fun releaseTask(region: ReservedRegion) {
+        synchronized(reservedTaskRegions) {
+            reservedTaskRegions.remove(region.id)
+        }
     }
 
-    private fun getChunkLock(chunkPos: ChunkPos): ReentrantReadWriteLock =
-        regionLocks.computeIfAbsent(chunkPos.toLong()) { ReentrantReadWriteLock() }
+    private fun getChunkLockStripeIndex(chunkPos: ChunkPos): Int {
+        val packed = chunkPos.toLong()
+        val mixed = packed xor (packed ushr 33) xor (packed ushr 17)
+        return ((mixed and Long.MAX_VALUE) % REGION_LOCK_STRIPES.toLong()).toInt()
+    }
+
+    private fun getChunkLock(chunkPos: ChunkPos): ReentrantReadWriteLock {
+        val index = getChunkLockStripeIndex(chunkPos)
+        return regionLocks[index]
+    }
 
     private fun <T> withChunkReadLock(chunkPos: ChunkPos, action: () -> T): T =
         getChunkLock(chunkPos).read(action)
 
     private fun <T> withTaskWriteLocks(region: TaskRegion, action: () -> T): T {
         val locks = region.chunks
-            .sortedWith(compareBy<ChunkPos> { it.x }.thenBy { it.z })
-            .map { getChunkLock(it).writeLock() }
+            .asSequence()
+            .map(::getChunkLockStripeIndex)
+            .distinct()
+            .sorted()
+            .map { regionLocks[it].writeLock() }
+            .toList()
 
         locks.forEach { it.lock() }
         try {
@@ -168,29 +238,82 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
     private fun snapshotSection(section: LevelChunkSection?): LevelChunkSection? =
         section?.let { LevelChunkSection(it.states.copy(), it.biomes) }
 
-    private fun snapshotTask(region: TaskRegion): TaskSnapshot {
+    private fun snapshotTask(
+        region: TaskRegion,
+        reusableSnapshots: MutableMap<Long, CachedChunkSnapshot>
+    ): TaskSnapshot {
         val snapshots = mutableMapOf<Long, HeatMaintainer.ChunkSnapshot>()
         val versions = mutableMapOf<Long, Int>()
 
         region.chunks.forEach { chunkPos ->
-            val chunk = getLoadedChunk(chunkPos.x, chunkPos.z) ?: return@forEach
             val packed = chunkPos.toLong()
+            val cachedSnapshot = reusableSnapshots[packed] ?: run {
+                val chunk = getLoadedChunk(chunkPos.x, chunkPos.z) ?: return@forEach
+                CachedChunkSnapshot(
+                    sections = chunk.sections.map(::snapshotSection),
+                    positiveHeat = chunk.getData(ModAttachments.POSITIVE_CHUNK_HEAT).copy(),
+                    negativeHeat = chunk.getData(ModAttachments.NEGATIVE_CHUNK_HEAT).copy(),
+                    version = chunk.getData(ModAttachments.HEAT_TASK_VERSION)
+                ).also { reusableSnapshots[packed] = it }
+            }
             snapshots[packed] = HeatMaintainer.ChunkSnapshot(
                 chunkPos = chunkPos,
-                sections = chunk.sections.map(::snapshotSection),
-                positiveHeat = chunk.getData(ModAttachments.POSITIVE_CHUNK_HEAT).copy(),
-                negativeHeat = chunk.getData(ModAttachments.NEGATIVE_CHUNK_HEAT).copy()
+                sections = cachedSnapshot.sections,
+                positiveHeat = cachedSnapshot.positiveHeat.copy(),
+                negativeHeat = cachedSnapshot.negativeHeat.copy()
             )
-            versions[packed] = chunk.getData(ModAttachments.HEAT_TASK_VERSION)
+            versions[packed] = cachedSnapshot.version
         }
 
         return TaskSnapshot(snapshots, versions)
     }
 
-    private fun versionsMatch(snapshot: TaskSnapshot): Boolean =
-        snapshot.versions.all { (packed, version) ->
+    private fun versionsMatch(snapshot: TaskSnapshot, touchedChunks: Set<Long>): Boolean =
+        touchedChunks.all { packed ->
+            val version = snapshot.versions[packed] ?: return@all false
             getChunkVersion(ChunkPos(packed)) == version
         }
+
+    private fun changedChunks(task: HeatProcessQueue.HeatTask): Set<ChunkPos> =
+        task.changedPosition
+            .mapTo(LinkedHashSet()) { ChunkPos(it) }
+            .ifEmpty { linkedSetOf(task.chunkPos) }
+
+    private fun tryMergeTaskBatch(seed: HeatProcessQueue.HeatTask): ScheduledTask {
+        val sourceTasks = mutableListOf(seed)
+        val scannedButNotMerged = mutableListOf<HeatProcessQueue.HeatTask>()
+        val mergedChangedChunks = changedChunks(seed).toMutableSet()
+        val mergedPositions = seed.changedPosition.toMutableSet()
+        val initializedChunks =
+            linkedSetOf<Long>().also { if (seed.initialized) it.add(seed.chunkPos.toLong()) }
+        var mergedRegion = taskRegionFromChunks(mergedChangedChunks)
+
+        repeat(MERGE_SCAN_LIMIT) {
+            val next = heatQueue.dequeue() ?: return@repeat
+            val nextRegion = taskRegion(next)
+            if (mergedRegion.overlaps(nextRegion)) {
+                sourceTasks.add(next)
+                mergedChangedChunks += changedChunks(next)
+                mergedPositions += next.changedPosition
+                if (next.initialized) initializedChunks.add(next.chunkPos.toLong())
+                mergedRegion = taskRegionFromChunks(mergedChangedChunks)
+            } else {
+                scannedButNotMerged.add(next)
+            }
+        }
+
+        scannedButNotMerged.forEach {
+            heatQueue.enqueueAll(it.chunkPos, it.changedPosition, it.initialized)
+        }
+
+        return ScheduledTask(
+            sourceTasks = sourceTasks,
+            primaryChunk = seed.chunkPos,
+            region = mergedRegion,
+            changedPositions = mergedPositions,
+            initializedChunks = initializedChunks
+        )
+    }
 
     private fun applyStorageUpdates(
         updates: Map<Long, HeatStorage>,
@@ -206,20 +329,44 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
         }
     }
 
+    private fun requeueSourceTasks(sourceTasks: Collection<HeatProcessQueue.HeatTask>) {
+        sourceTasks.forEach { source ->
+            heatQueue.enqueueAll(source.chunkPos, source.changedPosition, source.initialized)
+        }
+    }
+
+    private fun setInitializedChunkState(chunks: Set<Long>, state: HeatProcessState) {
+        chunks.forEach { packed ->
+            val chunkPos = ChunkPos(packed)
+            val chunk = getLoadedChunk(chunkPos.x, chunkPos.z) ?: return@forEach
+            chunkScanner.setProcessState(chunk, state)
+        }
+    }
+
     override fun queryPositive(chunkPos: ChunkPos): HeatStorage {
         val packed = chunkPos.toLong()
-        val data = positiveHeatCache[packed] ?: return level.getChunk(chunkPos.x, chunkPos.z)
-            .getData(ModAttachments.POSITIVE_CHUNK_HEAT)
+        positiveHeatCache[packed]?.let { return it }
+        getLoadedChunk(chunkPos.x, chunkPos.z)?.let { return it.getData(ModAttachments.POSITIVE_CHUNK_HEAT) }
 
-        return data
+        val server = (level as? ServerLevel)?.server
+        if (server != null && server.isSameThread) {
+            return level.getChunk(chunkPos.x, chunkPos.z).getData(ModAttachments.POSITIVE_CHUNK_HEAT)
+        }
+
+        return defaultPositiveHeatStorage
     }
 
     override fun queryNegative(chunkPos: ChunkPos): HeatStorage {
         val packed = chunkPos.toLong()
-        val data = negativeHeatCache[packed] ?: return level.getChunk(chunkPos.x, chunkPos.z)
-            .getData(ModAttachments.NEGATIVE_CHUNK_HEAT)
+        negativeHeatCache[packed]?.let { return it }
+        getLoadedChunk(chunkPos.x, chunkPos.z)?.let { return it.getData(ModAttachments.NEGATIVE_CHUNK_HEAT) }
 
-        return data
+        val server = (level as? ServerLevel)?.server
+        if (server != null && server.isSameThread) {
+            return level.getChunk(chunkPos.x, chunkPos.z).getData(ModAttachments.NEGATIVE_CHUNK_HEAT)
+        }
+
+        return defaultNegativeHeatStorage
     }
 
     private var biomeHeatCache: BiomeHeatConfiguration? = null
@@ -313,6 +460,17 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
 
             engine?.positiveHeatCache?.set(packed, positiveData)
             engine?.negativeHeatCache?.set(packed, negativeData)
+            if (engine != null) {
+                val state = chunk.getData(ModAttachments.HEAT_PROCESS_STATE)
+                if (
+                    state == HeatProcessState.PENDING &&
+                    !engine.record.contains(packed) &&
+                    !engine.chunkScanner.isInFlight(chunk.pos) &&
+                    !engine.heatQueue.contains(chunk.pos)
+                ) {
+                    engine.chunkScanner.setProcessState(chunk, HeatProcessState.UNPROCESSED)
+                }
+            }
         }
 
         @SubscribeEvent
@@ -368,86 +526,95 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
         if (heatQueue.empty) return
 
         val deferredTasks = mutableListOf<HeatProcessQueue.HeatTask>()
+        val reusableSnapshots = mutableMapOf<Long, CachedChunkSnapshot>()
 
         while (!heatQueue.empty && activeTaskCount.get() < MAX_PARALLEL_TASKS) {
-            val task = heatQueue.dequeue() ?: break
-            val region = taskRegion(task)
-            if (!tryReserveTask(region)) {
-                deferredTasks.add(task)
+            val seedTask = heatQueue.dequeue() ?: break
+            val task = tryMergeTaskBatch(seedTask)
+            val reservedRegion = tryReserveTask(task.region)
+            if (reservedRegion == null) {
+                deferredTasks += task.sourceTasks
                 continue
             }
-            val positions = task.changedPosition
+            val trackedChunks = linkedSetOf(task.primaryChunk.toLong()).apply {
+                addAll(task.initializedChunks)
+            }
+            val positions = task.changedPositions
 
             if (positions.isNotEmpty()) {
-                record.add(task.chunkPos.toLong())
+                record.addAll(trackedChunks)
                 activeTaskCount.incrementAndGet()
-                val snapshots = snapshotTask(region)
+                val snapshots = snapshotTask(reservedRegion.region, reusableSnapshots)
                 Worker.IO_POOL.execute taskRunner@{
                     if (closing) {
-                        record.remove(task.chunkPos.toLong())
-                        releaseTask(region)
+                        record.removeAll(trackedChunks)
+                        releaseTask(reservedRegion)
                         activeTaskCount.decrementAndGet()
                         return@taskRunner
                     }
                     try {
-                        val positiveUpdates =
-                            PositiveHeatMaintainer(this, snapshots.chunks).processHeatChanges(task.changedPosition)
-                        val negativeUpdates =
-                            NegativeHeatMaintainer(this, snapshots.chunks).processHeatChanges(task.changedPosition)
+                        val positiveResult =
+                            PositiveHeatMaintainer(this, snapshots.chunks).processHeatChanges(task.changedPositions)
+                        val negativeResult =
+                            NegativeHeatMaintainer(this, snapshots.chunks).processHeatChanges(task.changedPositions)
+                        val touchedChunks = HashSet<Long>(
+                            positiveResult.touchedChunks.size + negativeResult.touchedChunks.size
+                        ).apply {
+                            addAll(positiveResult.touchedChunks)
+                            addAll(negativeResult.touchedChunks)
+                        }
 
                         (level as? ServerLevel)?.server?.execute {
                             try {
                                 if (closing) return@execute
-                                withTaskWriteLocks(region) {
-                                    if (!versionsMatch(snapshots)) return@withTaskWriteLocks
+                                withTaskWriteLocks(reservedRegion.region) {
+                                    if (!versionsMatch(snapshots, touchedChunks)) {
+                                        requeueSourceTasks(task.sourceTasks)
+                                        setInitializedChunkState(task.initializedChunks, HeatProcessState.UNPROCESSED)
+                                        return@withTaskWriteLocks
+                                    }
                                     applyStorageUpdates(
-                                        positiveUpdates,
+                                        positiveResult.updates,
                                         ModAttachments.POSITIVE_CHUNK_HEAT,
                                         positiveHeatCache
                                     )
                                     applyStorageUpdates(
-                                        negativeUpdates,
+                                        negativeResult.updates,
                                         ModAttachments.NEGATIVE_CHUNK_HEAT,
                                         negativeHeatCache
                                     )
 
-                                    if (task.initialized) {
-                                        val chunk = getLoadedChunk(task.chunkPos.x, task.chunkPos.z)
-                                        if (chunk != null) chunkScanner.setProcessState(
-                                            chunk,
-                                            HeatProcessState.CORRECTED
-                                        )
-                                    }
+                                    setInitializedChunkState(task.initializedChunks, HeatProcessState.CORRECTED)
                                 }
                             } finally {
-                                record.remove(task.chunkPos.toLong())
-                                releaseTask(region)
+                                record.removeAll(trackedChunks)
+                                releaseTask(reservedRegion)
                                 activeTaskCount.decrementAndGet()
                             }
                         }
                     } catch (e: Exception) {
                         TheMod.LOGGER.error(e)
                         (level as? ServerLevel)?.server?.execute {
-                            getLoadedChunk(task.chunkPos.x, task.chunkPos.z)?.setData(
-                                ModAttachments.HEAT_PROCESS_STATE,
-                                HeatProcessState.ERROR
-                            )
-                            record.remove(task.chunkPos.toLong())
-                            releaseTask(region)
+                            task.initializedChunks.forEach { packed ->
+                                val chunkPos = ChunkPos(packed)
+                                getLoadedChunk(chunkPos.x, chunkPos.z)?.setData(
+                                    ModAttachments.HEAT_PROCESS_STATE,
+                                    HeatProcessState.ERROR
+                                )
+                            }
+                            record.removeAll(trackedChunks)
+                            releaseTask(reservedRegion)
                             activeTaskCount.decrementAndGet()
                         } ?: run {
-                            record.remove(task.chunkPos.toLong())
-                            releaseTask(region)
+                            record.removeAll(trackedChunks)
+                            releaseTask(reservedRegion)
                             activeTaskCount.decrementAndGet()
                         }
                     }
                 }
             } else {
-                releaseTask(region)
-                if (task.initialized) {
-                    val chunk = getLoadedChunk(task.chunkPos.x, task.chunkPos.z)
-                    if (chunk != null) chunkScanner.setProcessState(chunk, HeatProcessState.CORRECTED)
-                }
+                releaseTask(reservedRegion)
+                setInitializedChunkState(task.initializedChunks, HeatProcessState.CORRECTED)
             }
         }
 
