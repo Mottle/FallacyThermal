@@ -61,7 +61,8 @@ class ChunkScanner(
                     TheMod.LOGGER.error(e)
                     val server = (engine.level as? net.minecraft.server.level.ServerLevel)?.server
                     server?.execute {
-                        val loadedChunk = engine.getLoadedChunk(snapshot.chunkPos.x, snapshot.chunkPos.z) ?: return@execute
+                        val loadedChunk =
+                            engine.getLoadedChunk(snapshot.chunkPos.x, snapshot.chunkPos.z) ?: return@execute
                         setProcessState(loadedChunk, HeatProcessState.ERROR)
                     }
                 } finally {

@@ -11,12 +11,12 @@ import org.spongepowered.asm.mixin.Unique;
 public abstract class ServerLevelMixin implements ThermalExtension {
 
     @Unique
+    protected volatile ThermodynamicsEngine fallacy$thermodynamicsEngine = null;
+
+    @Unique
     private ServerLevel fallacy$self() {
         return (ServerLevel) (Object) this;
     }
-
-    @Unique
-    protected volatile ThermodynamicsEngine fallacy$thermodynamicsEngine = null;
 
     @Override
     public ThermodynamicsEngine fallacy$getThermalEngine() {

@@ -35,7 +35,7 @@ public interface BlockWithThermal {
     }
 
     @FunctionalInterface
-    interface TriGetter <T> {
+    interface TriGetter<T> {
         @NotNull
         T apply(@NotNull BlockState state, @NotNull Level level, @NotNull BlockPos pos);
     }

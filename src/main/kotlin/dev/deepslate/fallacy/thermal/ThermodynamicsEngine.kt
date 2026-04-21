@@ -60,7 +60,8 @@ abstract class ThermodynamicsEngine {
             (level as ThermalExtension).`fallacy$getThermalEngine`()
 
         fun getHeat(level: Level, pos: BlockPos): Int {
-            val engine = getEngine(level as ServerLevel)
+            if (level !is ServerLevel) return MIN_HEAT
+            val engine = getEngine(level)
             return engine.getHeat(pos)
         }
 

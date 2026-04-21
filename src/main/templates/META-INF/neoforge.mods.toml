@@ -1,18 +1,18 @@
-modLoader="kotlinforforge" #mandatory
+modLoader = "kotlinforforge" #mandatory
 
-loaderVersion="${loader_version_range}" #mandatory
+loaderVersion = "${loader_version_range}" #mandatory
 
-license="${mod_license}"
+license = "${mod_license}"
 
 [[mods]]
-modId="${mod_id}"
-version="${mod_version}"
-displayName="${mod_name}"
-authors="${mod_authors}"
-description='''${mod_description}'''
+modId = "${mod_id}"
+version = "${mod_version}"
+displayName = "${mod_name}"
+authors = "${mod_authors}"
+description = '''${mod_description}'''
 
 [[mixins]]
-config="${mod_id}.mixins.json"
+config = "${mod_id}.mixins.json"
 
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
@@ -22,18 +22,18 @@ config="${mod_id}.mixins.json"
 # The coremods config file path is not configurable and is always loaded from META-INF/coremods.json
 
 [[dependencies."${mod_id}"]]
-modId="neoforge"
-type="required"
-versionRange="${neo_version_range}"
-ordering="AFTER"
-side="BOTH"
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "AFTER"
+side = "BOTH"
 
 [[dependencies."${mod_id}"]]
-modId="minecraft"
-type="required"
-versionRange="${minecraft_version_range}"
-ordering="AFTER"
-side="BOTH"
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "AFTER"
+side = "BOTH"
 
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
 # that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't

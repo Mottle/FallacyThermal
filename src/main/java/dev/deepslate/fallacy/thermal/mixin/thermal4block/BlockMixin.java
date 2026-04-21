@@ -16,18 +16,16 @@ import org.spongepowered.asm.mixin.Unique;
 public abstract class BlockMixin implements BlockWithThermal {
 
     @Unique
+    private TriGetter<Integer> fallacy$intrinsicHeatGetter;
+    @Unique
+    private TriGetter<Integer> fallacy$epitaxialHeatGetter;
+    @Unique
+    private TriGetter<Float> fallacy$thermalConductivityGetter;
+
+    @Unique
     private Block fallacy$self() {
         return (Block) (Object) this;
     }
-
-    @Unique
-    private TriGetter<Integer> fallacy$intrinsicHeatGetter;
-
-    @Unique
-    private TriGetter<Integer> fallacy$epitaxialHeatGetter;
-
-    @Unique
-    private TriGetter<Float> fallacy$thermalConductivityGetter;
 
     @Override
     public void fallacy$setIntrinsicHeatGetter(@NotNull TriGetter<Integer> getter) {
