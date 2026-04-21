@@ -79,7 +79,10 @@ class ChunkScanner(
     fun getProcessState(chunk: ChunkAccess): HeatProcessState = chunk.getData(ModAttachments.HEAT_PROCESS_STATE)
 
     fun setProcessState(chunk: ChunkAccess, state: HeatProcessState) {
+        val previous = chunk.getData(ModAttachments.HEAT_PROCESS_STATE)
+        if (previous == state) return
         chunk.setData(ModAttachments.HEAT_PROCESS_STATE, state)
+        chunk.isUnsaved = true
     }
 
 

@@ -369,17 +369,28 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
         return defaultNegativeHeatStorage
     }
 
+    @Volatile
     private var biomeHeatCache: BiomeHeatConfiguration? = null
+    private val biomeHeatCacheLock = Any()
 
     fun invalidateBiomeHeatCache() {
         biomeHeatCache = null
     }
 
     fun getBiomeHeat(pos: BlockPos): Int {
-        if (biomeHeatCache == null) biomeHeatCache =
-            level.datapack(ModDatapacks.BIOME_HEAT_REGISTRY_KEY, BiomeHeatConfiguration.CONFIGURATION_KEY)
+        var cache = biomeHeatCache
+        if (cache == null) {
+            synchronized(biomeHeatCacheLock) {
+                cache = biomeHeatCache
+                if (cache == null) {
+                    cache =
+                        level.datapack(ModDatapacks.BIOME_HEAT_REGISTRY_KEY, BiomeHeatConfiguration.CONFIGURATION_KEY)
+                    biomeHeatCache = cache
+                }
+            }
+        }
         val biomeKey = level.getBiome(pos).key?.location() ?: return BiomeHeatConfiguration.DEFAULT.heat
-        return biomeHeatCache!!.query(biomeKey).heat
+        return cache?.query(biomeKey)?.heat ?: BiomeHeatConfiguration.DEFAULT.heat
     }
 
     override fun getHeat(pos: BlockPos): Int {
@@ -597,10 +608,8 @@ open class EnvironmentThermodynamicsEngine(override val level: Level) : Thermody
                         (level as? ServerLevel)?.server?.execute {
                             task.initializedChunks.forEach { packed ->
                                 val chunkPos = ChunkPos(packed)
-                                getLoadedChunk(chunkPos.x, chunkPos.z)?.setData(
-                                    ModAttachments.HEAT_PROCESS_STATE,
-                                    HeatProcessState.ERROR
-                                )
+                                val chunk = getLoadedChunk(chunkPos.x, chunkPos.z) ?: return@forEach
+                                chunkScanner.setProcessState(chunk, HeatProcessState.ERROR)
                             }
                             record.removeAll(trackedChunks)
                             releaseTask(reservedRegion)
